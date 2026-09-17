@@ -95,6 +95,12 @@
   .date-presets button:hover{border-color:var(--accent); color:var(--text);}
   .date-presets button.active{background:var(--accent); border-color:var(--accent); color:#1a0d00; font-weight:600;}
   .date-range-info{font-size:12px; color:var(--text-dim); margin-left:auto;}
+  .compare-toggle{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--text); cursor:pointer; white-space:nowrap; padding:8px 2px;}
+  .compare-toggle input{width:15px; height:15px; cursor:pointer; accent-color:var(--accent);}
+  .delta{display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; margin-top:6px;}
+  .delta.good{color:var(--good); background:var(--good-bg);}
+  .delta.bad{color:var(--bad); background:var(--bad-bg);}
+  .delta.warn{color:var(--text-dim); background:var(--panel-alt);}
 
   .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:14px; margin-bottom:26px;}
   .kpi-card{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 14px; position:relative; overflow:hidden;}
@@ -243,6 +249,13 @@
         <input type="date" id="dateTo">
       </div>
       <div class="date-presets" id="datePresets"></div>
+      <div class="date-field compare-field">
+        <label>&nbsp;</label>
+        <label class="compare-toggle">
+          <input type="checkbox" id="compareToggle">
+          Comparar con período anterior
+        </label>
+      </div>
       <span id="dateRangeInfo" class="date-range-info"></span>
     </div>
   </div>
@@ -340,6 +353,11 @@ let headers = [];
 let colMap = {};
 let campaigns = [];
 let allCampaigns = [];
+let prevCampaigns = [];
+let compareEnabled = false;
+let prevRangeLabel = '';
+let lastPresetKey = 'full';
+let lastDays = null;
 let charts = {};
 let benchmarks = {orMin:15, orMax:25, ctr:2.5, bounce:2, unsub:1};
 let lastInsights = [];
@@ -902,9 +920,12 @@ function setupDateFilter(){
 
   fromInput.onchange = ()=> applyDateFilter('custom');
   toInput.onchange = ()=> applyDateFilter('custom');
+
+  document.getElementById('compareToggle').onchange = ()=> applyDateFilter(lastPresetKey, lastDays);
 }
 
 function applyDateFilter(presetKey, days){
+  lastPresetKey = presetKey; lastDays = days;
   const fMinAll = allCampaigns[0].fecha, fMaxAll = allCampaigns[allCampaigns.length-1].fecha;
   const fromInput = document.getElementById('dateFrom');
   const toInput = document.getElementById('dateTo');
@@ -930,7 +951,26 @@ function applyDateFilter(presetKey, days){
   document.getElementById('datePresets').querySelectorAll('button').forEach(b=>{
     b.classList.toggle('active', b.dataset.key === presetKey);
   });
-  document.getElementById('dateRangeInfo').textContent = `${allCampaigns.length} envíos en el archivo · ${campaigns.length} en el rango elegido`;
+
+  compareEnabled = document.getElementById('compareToggle').checked;
+  prevCampaigns = [];
+  prevRangeLabel = '';
+  if(compareEnabled){
+    // Período anterior: misma duración (en ms), inmediatamente antes del inicio del rango elegido.
+    const periodMs = toEnd.getTime() - from.getTime();
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - periodMs);
+    prevCampaigns = allCampaigns.filter(c => c.fecha >= prevFrom && c.fecha <= prevTo);
+    prevRangeLabel = prevCampaigns.length ? `${fmtD(prevFrom)} — ${fmtD(prevTo)}` : '';
+  }
+
+  let rangeInfo = `${allCampaigns.length} envíos en el archivo · ${campaigns.length} en el rango elegido`;
+  if(compareEnabled){
+    rangeInfo += prevCampaigns.length
+      ? ` · comparando vs. ${prevRangeLabel} (${prevCampaigns.length} envíos)`
+      : ' · sin envíos suficientes antes del rango para comparar';
+  }
+  document.getElementById('dateRangeInfo').textContent = rangeInfo;
 
   if(!campaigns.length){
     document.getElementById('periodLabel').textContent = 'sin envíos en el rango elegido';
@@ -955,17 +995,44 @@ function renderAll(){
   renderInsightsAndRecs();
 }
 
+function computeEmailMetrics(camps){
+  const totalEnviados = camps.reduce((a,c)=>a+c.enviados,0);
+  const totalEntregados = camps.reduce((a,c)=>a+(c.entregados||0),0);
+  const totalRevenue = camps.reduce((a,c)=> a + (c.revenue!==null ? c.revenue : 0), 0);
+  const anyRevenue = camps.some(c=>c.revenue!==null);
+  return {
+    totalEnviados, totalEntregados, totalRevenue, anyRevenue,
+    avgOR: weightedAvg(camps,'openRate','entregados'),
+    avgCTR: weightedAvg(camps,'ctr','entregados'),
+    avgCTOR: weightedAvg(camps,'ctor','apU'),
+    avgBounce: weightedAvg(camps,'bounceRate','enviados'),
+    avgUnsub: weightedAvg(camps,'unsubRate','entregados'),
+    deliverability: totalEnviados>0 ? totalEntregados/totalEnviados : null,
+  };
+}
+
+// diff entre valor actual y anterior. isRate=true -> puntos porcentuales (pp); false -> % de variación relativa.
+// invert=true cuando "menos es mejor" (bounce, bajas).
+function deltaBadge(curr, prev, isRate, invert){
+  if(!compareEnabled || !prevCampaigns.length) return '';
+  if(curr===null || curr===undefined || isNaN(curr) || prev===null || prev===undefined || isNaN(prev)) return '';
+  let diff, txt;
+  if(isRate){
+    diff = (curr - prev) * 100;
+    txt = `${diff>=0?'+':''}${diff.toFixed(1)} pp vs. anterior`;
+  } else {
+    if(prev === 0) return '';
+    diff = ((curr - prev) / prev) * 100;
+    txt = `${diff>=0?'+':''}${diff.toFixed(1)}% vs. anterior`;
+  }
+  const cls = Math.abs(diff) < 0.05 ? 'warn' : (invert ? (diff<0?'good':'bad') : (diff>0?'good':'bad'));
+  return `<div class="delta ${cls}">${txt}</div>`;
+}
+
 function renderKPIs(){
-  const totalEnviados = campaigns.reduce((a,c)=>a+c.enviados,0);
-  const totalEntregados = campaigns.reduce((a,c)=>a+(c.entregados||0),0);
-  const totalRevenue = campaigns.reduce((a,c)=> a + (c.revenue!==null ? c.revenue : 0), 0);
-  const anyRevenue = campaigns.some(c=>c.revenue!==null);
-  const avgOR = weightedAvg(campaigns,'openRate','entregados');
-  const avgCTR = weightedAvg(campaigns,'ctr','entregados');
-  const avgCTOR = weightedAvg(campaigns,'ctor','apU');
-  const avgBounce = weightedAvg(campaigns,'bounceRate','enviados');
-  const avgUnsub = weightedAvg(campaigns,'unsubRate','entregados');
-  const deliverability = totalEnviados>0 ? totalEntregados/totalEnviados : null;
+  const m = computeEmailMetrics(campaigns);
+  const {totalEnviados, totalEntregados, totalRevenue, anyRevenue, avgOR, avgCTR, avgCTOR, avgBounce, avgUnsub, deliverability} = m;
+  const prevM = (compareEnabled && prevCampaigns.length) ? computeEmailMetrics(prevCampaigns) : null;
 
   function tagFor(value, kind){
     if(value===null) return {cls:'warn', txt:'sin datos'};
@@ -981,21 +1048,29 @@ function renderKPIs(){
   const isIcommFormat = platform === 'icomm';
 
   const cards = [
-    {label:'Envíos totales', value:fmtInt(totalEnviados), sub:`${campaigns.length} campañas`, tag:null},
-    {label:'Entregabilidad', value:pct(deliverability), sub:`${fmtInt(totalEntregados)} entregados`, tag:null},
-    {label:'Open Rate prom.', value:pct(avgOR), sub:`bench ${benchmarks.orMin}–${benchmarks.orMax}%`, tag:tagFor(avgOR,'or')},
+    {label:'Envíos totales', value:fmtInt(totalEnviados), sub:`${campaigns.length} campañas`, tag:null,
+      delta:prevM ? deltaBadge(totalEnviados, prevM.totalEnviados, false, false) : ''},
+    {label:'Entregabilidad', value:pct(deliverability), sub:`${fmtInt(totalEntregados)} entregados`, tag:null,
+      delta:prevM ? deltaBadge(deliverability, prevM.deliverability, true, false) : ''},
+    {label:'Open Rate prom.', value:pct(avgOR), sub:`bench ${benchmarks.orMin}–${benchmarks.orMax}%`, tag:tagFor(avgOR,'or'),
+      delta:prevM ? deltaBadge(avgOR, prevM.avgOR, true, false) : ''},
   ];
   if(isIcommFormat){
-    cards.push({label:'CTOR promedio', value:pct(avgCTOR), sub:`clics / aperturas — reemplaza a CTR en exports de iComm · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTOR,'ctr')});
+    cards.push({label:'CTOR promedio', value:pct(avgCTOR), sub:`clics / aperturas — reemplaza a CTR en exports de iComm · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTOR,'ctr'),
+      delta:prevM ? deltaBadge(avgCTOR, prevM.avgCTOR, true, false) : ''});
   } else {
-    cards.push({label:'CTR promedio', value:pct(avgCTR), sub:`clics / entregados · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTR,'ctr')});
+    cards.push({label:'CTR promedio', value:pct(avgCTR), sub:`clics / entregados · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTR,'ctr'),
+      delta:prevM ? deltaBadge(avgCTR, prevM.avgCTR, true, false) : ''});
   }
   cards.push(
-    {label:'Bounce Rate prom.', value:pct(avgBounce), sub:`bench < ${benchmarks.bounce}%`, tag:tagFor(avgBounce,'bounce')},
-    {label:'Bajas prom.', value:pct(avgUnsub), sub:`bench < ${benchmarks.unsub}%`, tag:tagFor(avgUnsub,'unsub')},
+    {label:'Bounce Rate prom.', value:pct(avgBounce), sub:`bench < ${benchmarks.bounce}%`, tag:tagFor(avgBounce,'bounce'),
+      delta:prevM ? deltaBadge(avgBounce, prevM.avgBounce, true, true) : ''},
+    {label:'Bajas prom.', value:pct(avgUnsub), sub:`bench < ${benchmarks.unsub}%`, tag:tagFor(avgUnsub,'unsub'),
+      delta:prevM ? deltaBadge(avgUnsub, prevM.avgUnsub, true, true) : ''},
   );
   if(anyRevenue){
-    cards.push({label:'Ingresos generados', value:fmtMoney(totalRevenue), sub:`${fmtMoney(totalRevenue/campaigns.length)} prom. por envío`, tag:null});
+    cards.push({label:'Ingresos generados', value:fmtMoney(totalRevenue), sub:`${fmtMoney(totalRevenue/campaigns.length)} prom. por envío`, tag:null,
+      delta:prevM ? deltaBadge(totalRevenue, prevM.totalRevenue, false, false) : ''});
   }
 
   const ga4 = computeGA4Metrics(platform);
@@ -1017,6 +1092,7 @@ function renderKPIs(){
       <div class="value">${c.value}</div>
       <div class="bench">${c.sub}</div>
       ${c.tag ? `<div class="tag ${c.tag.cls}">${c.tag.txt}</div>` : ''}
+      ${c.delta || ''}
     </div>`;
   }).join('');
 }
