@@ -1048,7 +1048,6 @@ function renderKPIs(){
   const isIcommFormat = platform === 'icomm';
 
   const cards = [
-    {label:'Envíos totales', value:fmtInt(totalEnviados), sub:`${campaigns.length} campañas`, tag:null},
     {label:'Entregabilidad', value:pct(deliverability), sub:`${fmtInt(totalEntregados)} entregados`, tag:null,
       delta:prevM ? deltaBadge(deliverability, prevM.deliverability, true, false) : ''},
     {label:'Open Rate prom.', value:pct(avgOR), sub:`bench ${benchmarks.orMin}–${benchmarks.orMax}%`, tag:tagFor(avgOR,'or'),
@@ -1079,7 +1078,6 @@ function renderKPIs(){
   const ga4 = computeGA4Metrics(platform);
   if(ga4){
     cards.push(
-      {label:'Sesiones (GA4)', value:fmtInt(ga4.sesiones), sub:`${pct(ga4.share)} del total de sesiones (todas las fuentes)${ga4Period ? ' · '+ga4Period : ''}`, tag:null},
       ga4.transaccionesColFound
         ? {label:'CR (GA4)', value:pct(ga4.cr), sub:`${fmtInt(ga4.transacciones)} transacciones / ${fmtInt(ga4.sesiones)} sesiones`, tag:null}
         : {label:'CR (GA4)', value:'—', sub:`no se detectó la columna de transacciones/eventos clave en el CSV`, tag:{cls:'warn', txt:'revisar columna'}},
