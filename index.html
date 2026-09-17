@@ -1048,16 +1048,19 @@ function renderKPIs(){
   const isIcommFormat = platform === 'icomm';
 
   const cards = [
-    {label:'Envíos totales', value:fmtInt(totalEnviados), sub:`${campaigns.length} campañas`, tag:null,
-      delta:prevM ? deltaBadge(totalEnviados, prevM.totalEnviados, false, false) : ''},
+    {label:'Envíos totales', value:fmtInt(totalEnviados), sub:`${campaigns.length} campañas`, tag:null},
     {label:'Entregabilidad', value:pct(deliverability), sub:`${fmtInt(totalEntregados)} entregados`, tag:null,
       delta:prevM ? deltaBadge(deliverability, prevM.deliverability, true, false) : ''},
     {label:'Open Rate prom.', value:pct(avgOR), sub:`bench ${benchmarks.orMin}–${benchmarks.orMax}%`, tag:tagFor(avgOR,'or'),
       delta:prevM ? deltaBadge(avgOR, prevM.avgOR, true, false) : ''},
   ];
   if(isIcommFormat){
-    cards.push({label:'CTOR promedio', value:pct(avgCTOR), sub:`clics / aperturas — reemplaza a CTR en exports de iComm · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTOR,'ctr'),
-      delta:prevM ? deltaBadge(avgCTOR, prevM.avgCTOR, true, false) : ''});
+    cards.push(
+      {label:'CTOR promedio', value:pct(avgCTOR), sub:`clics / aperturas`, tag:null,
+        delta:prevM ? deltaBadge(avgCTOR, prevM.avgCTOR, true, false) : ''},
+      {label:'CTR promedio', value:pct(avgCTR), sub:`clics / entregados · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTR,'ctr'),
+        delta:prevM ? deltaBadge(avgCTR, prevM.avgCTR, true, false) : ''},
+    );
   } else {
     cards.push({label:'CTR promedio', value:pct(avgCTR), sub:`clics / entregados · bench ≥ ${benchmarks.ctr}%`, tag:tagFor(avgCTR,'ctr'),
       delta:prevM ? deltaBadge(avgCTR, prevM.avgCTR, true, false) : ''});
